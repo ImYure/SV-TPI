@@ -6,4 +6,4 @@ Descripción: Somos un grupo de 3 integrantes desarrollando una página web de c
 
 Link diseño en figma: https://www.figma.com/design/JbcxSW312VPiTLUvjXRoVo/TPI?node-id=0-1&t=SPeGodwp1EgYKhze-1
 
-Link miro para bd y diagramas: https://miro.com/welcomeonboard/WWYyZFUyeHovVkx1TnRkRFViV1hDSTZxN2V3ZndVNDZvdnlaVWRsd29NaXQ3VzhhZlV6NEhtOG9XbnFCcHJzTVVjd0o1dERseGlTbkFKejR2UGVRTnlqMHlSdlprM0tWSzh3ZCtOTTcvc002M2dxdkRIT0Fja2szOVlXN2c3cGdNakdSWkpBejJWRjJhRnhhb1UwcS9BPT0hdjE=?share_link_id=750874491091
+Link miro para bd y diagramas: https://miro.com/app/board/uXjVGkR9keo=/?share_link_id=706812145612
