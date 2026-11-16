@@ -1,0 +1,21 @@
+# Variables de entorno y credenciales
+.env
+.env.*
+!.env.example
+
+# Dependencias
+node_modules/
+
+# Carpetas de compilación (Vite / React / Build)
+dist/
+build/
+
+# Logs y depuración
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos del sistema operativo y editores
+.DS_Store
+Thumbs.db
+.vscode/
