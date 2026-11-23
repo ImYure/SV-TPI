@@ -10,6 +10,7 @@ console.log("ANTES DE CARGAR LAS RUTAS");
 
 const router = require('./rutas/PerfilUsuario');
 const rutas = require('./rutas/ruta');
+const rutasCartas = require('./rutas/Cartas');
 
 console.log("DESPUES DE CARGAR LAS RUTAS");
 
@@ -34,6 +35,7 @@ app.use(function(req, res, next) {
 // Routers
 app.use('/perfil', router);
 app.use('/api', rutas);
+app.use('/cartas', rutasCartas);
 
 app.get("/", function (req, res) {
     res.send("Backend funcionando");
