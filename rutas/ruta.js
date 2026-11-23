@@ -209,19 +209,38 @@ router.post("/login", async function (req, res) {
 });
 
 
-// Crear usuario desde el panel de administración
+// Obtener todos los usuarios
+router.get("/usuarios", verificarToken, verificarAdmin, async function (req, res) {
+    try {
+        const [usuarios] = await conexion.query(
+            `SELECT id, nombre, apellido, mail, rol_id
+             FROM usuarios
+             ORDER BY id DESC`
+        );
+
+        res.json(usuarios);
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensaje: "Error al obtener los usuarios"
+        });
+    }
+});
+
+
+// Crear un usuario desde el panel administrador
 router.post("/usuarios", verificarToken, verificarAdmin, async function (req, res) {
     try {
         const { nombre, apellido, mail, pass, rol_id } = req.body;
 
-        // Validar campos obligatorios
-        if (!nombre || !apellido || !mail || !pass || !rol_id) {
+        if (!nombre || !apellido || !mail || !pass || ![1, 2].includes(Number(rol_id))) {
             return res.status(400).json({
-                mensaje: "Todos los campos son obligatorios"
+                mensaje: "Completá todos los campos correctamente"
             });
         }
 
-        // Comprobar que los datos sean texto
         if (
             typeof nombre !== "string" ||
             typeof apellido !== "string" ||
@@ -229,59 +248,34 @@ router.post("/usuarios", verificarToken, verificarAdmin, async function (req, re
             typeof pass !== "string"
         ) {
             return res.status(400).json({
-                mensaje: "Los datos personales y la contraseña deben ser texto"
+                mensaje: "Los datos deben ser texto"
             });
         }
 
-        // Comprobar formato básico del correo
         if (!mail.includes("@") || !mail.includes(".")) {
             return res.status(400).json({
                 mensaje: "El correo electrónico no es válido"
             });
         }
 
-        // Comprobar que el rol sea un número válido
-        const rolId = Number(rol_id);
-
-        if (!Number.isInteger(rolId) || rolId <= 0) {
-            return res.status(400).json({
-                mensaje: "El rol seleccionado no es válido"
-            });
-        }
-
-        // Comprobar si el correo ya existe
-        const [usuarios] = await conexion.query(
+        const [existentes] = await conexion.query(
             "SELECT id FROM usuarios WHERE mail = ?",
             [mail]
         );
 
-        if (usuarios.length > 0) {
+        if (existentes.length > 0) {
             return res.status(409).json({
                 mensaje: "Ese correo ya está registrado"
             });
         }
 
-        // Comprobar que el rol exista
-        const [roles] = await conexion.query(
-            "SELECT id FROM rol WHERE id = ?",
-            [rolId]
-        );
-
-        if (roles.length === 0) {
-            return res.status(400).json({
-                mensaje: "El rol seleccionado no existe"
-            });
-        }
-
-        // Encriptar contraseña
         const contraseñaEncriptada = await bcrypt.hash(pass, 10);
 
-        // Insertar usuario en MySQL
         await conexion.query(
             `INSERT INTO usuarios
             (nombre, apellido, rol_id, mail, pass)
             VALUES (?, ?, ?, ?, ?)`,
-            [nombre, apellido, rolId, mail, contraseñaEncriptada]
+            [nombre, apellido, Number(rol_id), mail, contraseñaEncriptada]
         );
 
         res.status(201).json({
@@ -298,51 +292,155 @@ router.post("/usuarios", verificarToken, verificarAdmin, async function (req, re
 });
 
 
-
-// Obtener los roles disponibles
-router.get("/roles", verificarToken, verificarAdmin, async function (req, res) {
+// Editar un usuario
+router.put("/usuarios/:id", verificarToken, verificarAdmin, async function (req, res) {
     try {
-        const [roles] = await conexion.query(
-            "SELECT id, rol FROM rol"
-        );
+        const id = Number(req.params.id);
+        const { nombre, apellido, mail, pass, rol_id } = req.body;
 
-        res.json(roles);
+        if (
+            !Number.isInteger(id) ||
+            id <= 0 ||
+            !nombre ||
+            !apellido ||
+            !mail ||
+            ![1, 2].includes(Number(rol_id))
+        ) {
+            return res.status(400).json({
+                mensaje: "Los datos enviados no son válidos"
+            });
+        }
 
-    } catch (error) {
-        console.error(error);
+        if (
+            typeof nombre !== "string" ||
+            typeof apellido !== "string" ||
+            typeof mail !== "string" ||
+            (pass !== undefined && typeof pass !== "string")
+        ) {
+            return res.status(400).json({
+                mensaje: "Los datos deben ser texto"
+            });
+        }
 
-        res.status(500).json({
-            mensaje: "Error al obtener los roles"
-        });
-    }
-});
+        if (!mail.includes("@") || !mail.includes(".")) {
+            return res.status(400).json({
+                mensaje: "El correo electrónico no es válido"
+            });
+        }
 
-
-// Obtener todos los usuarios
-router.get("/usuarios", verificarToken, verificarAdmin, async function (req, res) {
-    try {
+        // Comprobar que el usuario exista
         const [usuarios] = await conexion.query(
-            `SELECT
-                usuarios.id,
-                usuarios.nombre,
-                usuarios.apellido,
-                usuarios.mail,
-                usuarios.rol_id,
-                rol.rol
-            FROM usuarios
-            INNER JOIN rol ON usuarios.rol_id = rol.id`
+            "SELECT id FROM usuarios WHERE id = ?",
+            [id]
         );
 
-        res.json(usuarios);
+        if (usuarios.length === 0) {
+            return res.status(404).json({
+                mensaje: "El usuario no existe"
+            });
+        }
+
+        // Comprobar que el correo no pertenezca a otra cuenta
+        const [correos] = await conexion.query(
+            "SELECT id FROM usuarios WHERE mail = ? AND id != ?",
+            [mail, id]
+        );
+
+        if (correos.length > 0) {
+            return res.status(409).json({
+                mensaje: "Ese correo ya pertenece a otro usuario"
+            });
+        }
+
+        // Evitar que el administrador se quite su propio permiso
+        if (
+            id === Number(req.usuario.id) &&
+            Number(rol_id) !== 1
+        ) {
+            return res.status(400).json({
+                mensaje: "No podés quitarte tu propio rol de administrador"
+            });
+        }
+
+        // Si se escribió una contraseña nueva, también se actualiza
+        if (pass && pass.trim() !== "") {
+            const contraseñaEncriptada = await bcrypt.hash(pass, 10);
+
+            await conexion.query(
+                `UPDATE usuarios
+                 SET nombre = ?, apellido = ?, mail = ?, rol_id = ?, pass = ?
+                 WHERE id = ?`,
+                [nombre, apellido, mail, Number(rol_id), contraseñaEncriptada, id]
+            );
+
+        } else {
+            await conexion.query(
+                `UPDATE usuarios
+                 SET nombre = ?, apellido = ?, mail = ?, rol_id = ?
+                 WHERE id = ?`,
+                [nombre, apellido, mail, Number(rol_id), id]
+            );
+        }
+
+        res.json({
+            mensaje: "Usuario actualizado correctamente"
+        });
 
     } catch (error) {
         console.error(error);
 
         res.status(500).json({
-            mensaje: "Error al obtener los usuarios"
+            mensaje: "Error al actualizar el usuario"
         });
     }
 });
 
+
+// Eliminar un usuario
+router.delete("/usuarios/:id", verificarToken, verificarAdmin, async function (req, res) {
+    try {
+        const id = Number(req.params.id);
+
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({
+                mensaje: "ID no válido"
+            });
+        }
+
+        // Evitar que el administrador elimine su propia cuenta
+        if (id === Number(req.usuario.id)) {
+            return res.status(400).json({
+                mensaje: "No podés eliminar tu propia cuenta"
+            });
+        }
+
+        const [usuarios] = await conexion.query(
+            "SELECT id FROM usuarios WHERE id = ?",
+            [id]
+        );
+
+        if (usuarios.length === 0) {
+            return res.status(404).json({
+                mensaje: "El usuario no existe"
+            });
+        }
+
+        await conexion.query(
+            "DELETE FROM usuarios WHERE id = ?",
+            [id]
+        );
+
+        res.json({
+            mensaje: "Usuario eliminado correctamente"
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensaje: "Error al eliminar el usuario"
+        });
+    }
+});
 
 module.exports = router;

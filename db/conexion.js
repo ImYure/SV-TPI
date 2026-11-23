@@ -1,14 +1,14 @@
+const { DB_HOST, DB_NAME, DB_USER, DB_PASS } = process.env;
+const mysql = require('mysql2/promise')
 
-const mysql = require("mysql2/promise");
-
-const conexion = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
+const db = mysql.createPool({
+    host: DB_HOST,
+    database: DB_NAME,
+    user: DB_USER,
+    password: DB_PASS,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
-});
+})
 
-module.exports = conexion;
+module.exports = db
