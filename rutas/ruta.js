@@ -208,4 +208,141 @@ router.post("/login", async function (req, res) {
     }
 });
 
+
+// Crear usuario desde el panel de administración
+router.post("/usuarios", verificarToken, verificarAdmin, async function (req, res) {
+    try {
+        const { nombre, apellido, mail, pass, rol_id } = req.body;
+
+        // Validar campos obligatorios
+        if (!nombre || !apellido || !mail || !pass || !rol_id) {
+            return res.status(400).json({
+                mensaje: "Todos los campos son obligatorios"
+            });
+        }
+
+        // Comprobar que los datos sean texto
+        if (
+            typeof nombre !== "string" ||
+            typeof apellido !== "string" ||
+            typeof mail !== "string" ||
+            typeof pass !== "string"
+        ) {
+            return res.status(400).json({
+                mensaje: "Los datos personales y la contraseña deben ser texto"
+            });
+        }
+
+        // Comprobar formato básico del correo
+        if (!mail.includes("@") || !mail.includes(".")) {
+            return res.status(400).json({
+                mensaje: "El correo electrónico no es válido"
+            });
+        }
+
+        // Comprobar que el rol sea un número válido
+        const rolId = Number(rol_id);
+
+        if (!Number.isInteger(rolId) || rolId <= 0) {
+            return res.status(400).json({
+                mensaje: "El rol seleccionado no es válido"
+            });
+        }
+
+        // Comprobar si el correo ya existe
+        const [usuarios] = await conexion.query(
+            "SELECT id FROM usuarios WHERE mail = ?",
+            [mail]
+        );
+
+        if (usuarios.length > 0) {
+            return res.status(409).json({
+                mensaje: "Ese correo ya está registrado"
+            });
+        }
+
+        // Comprobar que el rol exista
+        const [roles] = await conexion.query(
+            "SELECT id FROM rol WHERE id = ?",
+            [rolId]
+        );
+
+        if (roles.length === 0) {
+            return res.status(400).json({
+                mensaje: "El rol seleccionado no existe"
+            });
+        }
+
+        // Encriptar contraseña
+        const contraseñaEncriptada = await bcrypt.hash(pass, 10);
+
+        // Insertar usuario en MySQL
+        await conexion.query(
+            `INSERT INTO usuarios
+            (nombre, apellido, rol_id, mail, pass)
+            VALUES (?, ?, ?, ?, ?)`,
+            [nombre, apellido, rolId, mail, contraseñaEncriptada]
+        );
+
+        res.status(201).json({
+            mensaje: "Usuario creado correctamente"
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensaje: "Error al crear el usuario"
+        });
+    }
+});
+
+
+
+// Obtener los roles disponibles
+router.get("/roles", verificarToken, verificarAdmin, async function (req, res) {
+    try {
+        const [roles] = await conexion.query(
+            "SELECT id, rol FROM rol"
+        );
+
+        res.json(roles);
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensaje: "Error al obtener los roles"
+        });
+    }
+});
+
+
+// Obtener todos los usuarios
+router.get("/usuarios", verificarToken, verificarAdmin, async function (req, res) {
+    try {
+        const [usuarios] = await conexion.query(
+            `SELECT
+                usuarios.id,
+                usuarios.nombre,
+                usuarios.apellido,
+                usuarios.mail,
+                usuarios.rol_id,
+                rol.rol
+            FROM usuarios
+            INNER JOIN rol ON usuarios.rol_id = rol.id`
+        );
+
+        res.json(usuarios);
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensaje: "Error al obtener los usuarios"
+        });
+    }
+});
+
+
 module.exports = router;
