@@ -49,6 +49,24 @@ router.get("/admin", verificarToken, verificarAdmin, function (req, res) {
 
 });
 
+// Obtener todos los roles
+router.get("/roles", verificarToken, verificarAdmin, async function (req, res) {
+    try {
+        const [roles] = await conexion.query(
+            "SELECT id, rol FROM rol"
+        );
+
+        res.json(roles);
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            mensaje: "Error al obtener los roles"
+        });
+    }
+});
+
 // Registrar usuario
 router.post("/registro", async function (req, res) {
     try {

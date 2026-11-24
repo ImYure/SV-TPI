@@ -5,6 +5,7 @@ console.log("Carpeta actual:", __dirname);
 require('dotenv').config();
 
 const express = require('express');
+const path = require('path');
 
 console.log("ANTES DE CARGAR LAS RUTAS");
 
@@ -18,6 +19,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Hacer públicas las imágenes
+app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
 
 // Configuración CORS de testing
 app.use(function(req, res, next) {
@@ -33,6 +37,7 @@ app.use(function(req, res, next) {
 });
 
 // Routers
+app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
 app.use('/perfil', router);
 app.use('/api', rutas);
 app.use('/cartas', rutasCartas);
