@@ -5,7 +5,7 @@ const db = require('../db/conexion')
 
 router.get('/:id', function (req, res, next) {
     const { id } = req.params
-    const sql = 'SELECT id, nombre, apellido, mail, nombre_usuario, titulo FROM usuarios WHERE id = ?'
+    const sql = 'SELECT id, nombre, apellido, mail, titulo FROM usuarios WHERE id = ?'
 
     db.query(sql, [id])
 
