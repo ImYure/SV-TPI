@@ -20,10 +20,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Hacer públicas las imágenes
-app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
-
-// Configuración CORS de testing
+// Configuración CORS
 app.use(function(req, res, next) {
     res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -36,16 +33,20 @@ app.use(function(req, res, next) {
     next();
 });
 
-// Routers
+// Hacer públicas las imágenes de las cartas
 app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
+
+// Routers
 app.use('/perfil', router);
 app.use('/api', rutas);
 app.use('/cartas', rutasCartas);
 
+// Ruta principal
 app.get("/", function (req, res) {
     res.send("Backend funcionando");
 });
 
+// Iniciar servidor
 app.listen(PORT, function () {
     console.log(`Servidor escuchando en puerto ${PORT}`);
 });

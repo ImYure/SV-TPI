@@ -1,4 +1,3 @@
-
 // Middleware para comprobar si el usuario es administrador
 function verificarAdmin(req, res, next) {
 
