@@ -5,7 +5,7 @@ const db = require('../db/conexion')
 
 router.get('/:id', function (req, res, next) {
     const { id } = req.params
-    const sql = 'SELECT id, nombre, apellido, mail, titulo FROM usuarios WHERE id = ?'
+    const sql = 'SELECT id, nombre, apellido, mail FROM usuarios WHERE id = ?'
 
     db.query(sql, [id])
 
@@ -18,9 +18,11 @@ router.get('/:id', function (req, res, next) {
 
         })
         .catch((error) => {
-            res.status(500).send("ocurrio un error")
-            console.error(error)
-        })
+    console.error("Error al obtener el perfil:", error);
+    res.status(500).json({
+        mensaje: "Ocurrió un error al obtener el perfil."
+    });
+});
 })
 
 router.put('/:id', function (req, res, next) {
@@ -34,9 +36,11 @@ router.put('/:id', function (req, res, next) {
         res.status(200).send("se actualizo la informacion")
     })
     .catch((error) => {
-        res.status(500).send("ocurrio un error")
-        console.error(error)
-    })
+    console.error("Error al obtener el perfil:", error);
+    res.status(500).json({
+        mensaje: "Ocurrió un error al obtener el perfil."
+    });
+});
 })
 
 router.put('/titulo/:id', function (req, res, next) {
@@ -50,8 +54,10 @@ router.put('/titulo/:id', function (req, res, next) {
         res.status(200).send("se actualizo el titulo")
     })
     .catch((error) => {
-        res.status(500).send("ocurrio un error")
-        console.error(error)
-    })
+    console.error("Error al obtener el perfil:", error);
+    res.status(500).json({
+        mensaje: "Ocurrió un error al obtener el perfil."
+    });
+});
 })
 module.exports = router
