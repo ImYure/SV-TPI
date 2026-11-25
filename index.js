@@ -12,6 +12,7 @@ console.log("ANTES DE CARGAR LAS RUTAS");
 const router = require('./rutas/PerfilUsuario');
 const rutas = require('./rutas/ruta');
 const rutasCartas = require('./rutas/Cartas');
+const rutasSobres = require('./rutas/Sobres');
 
 console.log("DESPUES DE CARGAR LAS RUTAS");
 
@@ -40,6 +41,7 @@ app.use(function(req, res, next) {
 app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
 app.use('/perfil', router);
 app.use('/api', rutas);
+app.use('/sobres', rutasSobres);
 app.use('/cartas', rutasCartas);
 
 app.get("/", function (req, res) {
