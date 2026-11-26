@@ -9,10 +9,12 @@ const path = require('path');
 
 console.log("ANTES DE CARGAR LAS RUTAS");
 
+const rutasProductos = require('./rutas/productos');
 const router = require('./rutas/PerfilUsuario');
 const rutas = require('./rutas/ruta');
 const rutasCartas = require('./rutas/Cartas');
 const rutasSobres = require('./rutas/Sobres');
+const rutasMazos = require('./rutas/Mazos');
 
 console.log("DESPUES DE CARGAR LAS RUTAS");
 
@@ -21,8 +23,12 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// Mostrar imágenes de cartas
+app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
+
 // Configuración CORS
 app.use(function(req, res, next) {
+
     res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -34,7 +40,6 @@ app.use(function(req, res, next) {
     next();
 });
 
-// Hacer públicas las imágenes de las cartas
 app.use('/imagenes', express.static(path.join(__dirname, 'imagenes')));
 
 // Routers
@@ -42,6 +47,8 @@ app.use('/perfil', router);
 app.use('/api', rutas);
 app.use('/sobres', rutasSobres);
 app.use('/cartas', rutasCartas);
+app.use('/productos', rutasProductos);
+app.use('/mazos', rutasMazos);
 
 // Ruta principal
 app.get("/", function (req, res) {

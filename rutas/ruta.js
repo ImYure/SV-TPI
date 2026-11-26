@@ -67,8 +67,13 @@ router.get("/roles", verificarToken, verificarAdmin, async function (req, res) {
     }
 });
 
-// Registrar usuario
+
+
+//registrar usuario
 router.post("/registro", async function (req, res) {
+    let conexionTransaccion;
+    let transaccionIniciada = false;
+
     try {
         const { nombre, apellido, mail, pass } = req.body;
 
@@ -113,29 +118,63 @@ router.post("/registro", async function (req, res) {
         // Encriptar contraseña
         const contraseñaEncriptada = await bcrypt.hash(pass, 10);
 
+        // Obtener conexión e iniciar transacción
+        conexionTransaccion = await conexion.getConnection();
+
+        await conexionTransaccion.beginTransaction();
+        transaccionIniciada = true;
+
         // Registrar siempre como Jugador
-        await conexion.query(
+        const [resultado] = await conexionTransaccion.query(
             `INSERT INTO usuarios
             (nombre, apellido, rol_id, mail, pass)
             VALUES (?, ?, ?, ?, ?)`,
             [nombre, apellido, 2, mail, contraseñaEncriptada]
         );
 
+                // Crear la billetera del usuario
+            const usuarioId = resultado.insertId;
+
+            await conexionTransaccion.query(
+                `INSERT INTO billetera (usuario_id, saldo)
+                VALUES (?, 0)`,
+                [usuarioId]
+            );
+
+
+        // Confirmar ambas operaciones
+        await conexionTransaccion.commit();
+        transaccionIniciada = false;
+
         res.status(201).json({
             mensaje: "Usuario registrado correctamente"
         });
 
     } catch (error) {
+        // Deshacer cambios si ocurre un error
+        if (transaccionIniciada) {
+            await conexionTransaccion.rollback();
+        }
+
         console.error(error);
 
         res.status(500).json({
             mensaje: "Error al registrar el usuario"
         });
+
+    } finally {
+        // Liberar conexión
+        if (conexionTransaccion) {
+            conexionTransaccion.release();
+        }
     }
 });
 
+
+
 // Iniciar sesión
 router.post("/login", async function (req, res) {
+
     try {
         const { mail, pass } = req.body;
 
@@ -250,6 +289,10 @@ router.get("/usuarios", verificarToken, verificarAdmin, async function (req, res
 
 // Crear un usuario desde el panel administrador
 router.post("/usuarios", verificarToken, verificarAdmin, async function (req, res) {
+
+    let conexionTransaccion;
+    let transaccionIniciada = false;
+
     try {
         const { nombre, apellido, mail, pass, rol_id } = req.body;
 
@@ -289,23 +332,50 @@ router.post("/usuarios", verificarToken, verificarAdmin, async function (req, re
 
         const contraseñaEncriptada = await bcrypt.hash(pass, 10);
 
-        await conexion.query(
+        conexionTransaccion = await conexion.getConnection();
+
+        await conexionTransaccion.beginTransaction();
+        transaccionIniciada = true;
+
+        const [resultado] = await conexionTransaccion.query (
             `INSERT INTO usuarios
             (nombre, apellido, rol_id, mail, pass)
             VALUES (?, ?, ?, ?, ?)`,
             [nombre, apellido, Number(rol_id), mail, contraseñaEncriptada]
         );
 
+        //crea la billetera
+        const usuarioId = resultado.insertId;
+
+        await  conexionTransaccion.query(
+        `INSERT INTO billetera (usuario_id, saldo)
+        values(?,0)`,
+        [usuarioId]
+        );
+
+
+        //confirmamos la billetera del usuario
+        await conexionTransaccion.commit();
+        transaccionIniciada = false;
+
         res.status(201).json({
             mensaje: "Usuario creado correctamente"
         });
 
     } catch (error) {
+        if(transaccionIniciada){
+            await conexionTransaccion.rollback();
+        }
+
         console.error(error);
 
         res.status(500).json({
             mensaje: "Error al crear el usuario"
         });
+    }finally{
+        if(conexionTransaccion){
+            conexionTransaccion.release();
+        }
     }
 });
 

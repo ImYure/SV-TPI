@@ -412,5 +412,185 @@ router.delete("/:id", verificarToken, verificarAdmin, function (req, res) {
         });
 });
 
+// COMPRAR UNA CARTA CON MONEDAS
+router.post(
+    "/comprar/:id",
+    verificarToken,
+    async function (req, res) {
+        const cartaId = Number(req.params.id);
+        const usuarioId = req.usuario.id;
+
+        if (!Number.isInteger(cartaId) || cartaId <= 0) {
+            return res.status(400).json({
+                mensaje: "El ID de la carta no es válido."
+            });
+        }
+
+        let conexion;
+        let transaccionIniciada = false;
+
+        try {
+            conexion = await db.getConnection();
+            await conexion.beginTransaction();
+            transaccionIniciada = true;
+
+            const [cartas] = await conexion.query(
+                "SELECT id, nombre, precio FROM cartas WHERE id = ?",
+                [cartaId]
+            );
+
+            if (cartas.length === 0) {
+                await conexion.rollback();
+                transaccionIniciada = false;
+
+                return res.status(404).json({
+                    mensaje: "La carta no existe."
+                });
+            }
+
+            const carta = cartas[0];
+            const precio = Number(carta.precio);
+
+            if (!Number.isFinite(precio) || precio <= 0) {
+                await conexion.rollback();
+                transaccionIniciada = false;
+
+                return res.status(400).json({
+                    mensaje: "El precio de la carta no es válido."
+                });
+            }
+
+            const [billeteras] = await conexion.query(
+                `SELECT id, saldo
+                 FROM billetera
+                 WHERE usuario_id = ?
+                 FOR UPDATE`,
+                [usuarioId]
+            );
+
+            if (billeteras.length === 0) {
+                await conexion.rollback();
+                transaccionIniciada = false;
+
+                return res.status(404).json({
+                    mensaje: "No se encontró tu billetera."
+                });
+            }
+
+            const billetera = billeteras[0];
+            const saldoActual = Number(billetera.saldo);
+
+            if (saldoActual < precio) {
+                await conexion.rollback();
+                transaccionIniciada = false;
+
+                return res.status(400).json({
+                    mensaje: "No tenés monedas suficientes.",
+                    saldo: saldoActual,
+                    precio: precio
+                });
+            }
+
+            await conexion.query(
+                "UPDATE billetera SET saldo = saldo - ? WHERE id = ?",
+                [precio, billetera.id]
+            );
+
+            const [cartasUsuario] = await conexion.query(
+                `SELECT id, cantidad
+                 FROM usuario_cartas
+                 WHERE usuario_id = ? AND carta_id = ?
+                 FOR UPDATE`,
+                [usuarioId, cartaId]
+            );
+
+            if (cartasUsuario.length > 0) {
+                await conexion.query(
+                    `UPDATE usuario_cartas
+                     SET cantidad = cantidad + 1
+                     WHERE id = ?`,
+                    [cartasUsuario[0].id]
+                );
+            } else {
+                await conexion.query(
+                    `INSERT INTO usuario_cartas
+                     (usuario_id, carta_id, cantidad)
+                     VALUES (?, ?, 1)`,
+                    [usuarioId, cartaId]
+                );
+            }
+
+            await conexion.commit();
+            transaccionIniciada = false;
+
+            res.status(200).json({
+                mensaje: "¡Carta comprada correctamente!",
+                carta: carta.nombre,
+                saldo: saldoActual - precio
+            });
+
+        } catch (error) {
+            if (conexion && transaccionIniciada) {
+                await conexion.rollback();
+            }
+
+            console.error(error);
+
+            res.status(500).json({
+                mensaje: "Error al comprar la carta."
+            });
+        } finally {
+            if (conexion) {
+                conexion.release();
+            }
+        }
+    }
+);
+
+
+// OBTENER LAS CARTAS DEL INVENTARIO DEL USUARIO
+router.get(
+    "/mis-cartas",
+    verificarToken,
+    async function (req, res) {
+        try {
+            const [cartas] = await db.query(
+                `SELECT
+                    c.id,
+                    'carta' AS tipo,
+                    c.nombre,
+                    c.categoria_id,
+                    cat.nombre AS categoria,
+                    c.rareza_id,
+                    r.nombre AS rareza,
+                    c.descripcion,
+                    c.imagen,
+                    c.precio,
+                    c.ataque,
+                    c.vida,
+                    c.defensa,
+                    c.velocidad,
+                    c.critico,
+                    uc.cantidad
+                 FROM usuario_cartas uc
+                 INNER JOIN cartas c ON c.id = uc.carta_id
+                 INNER JOIN categoria cat ON cat.id = c.categoria_id
+                 INNER JOIN rareza r ON r.id = c.rareza_id
+                 WHERE uc.usuario_id = ?
+                 ORDER BY c.id DESC`,
+                [req.usuario.id]
+            );
+
+            res.status(200).json({ cartas });
+
+        } catch (error) {
+            console.error(error);
+
+            res.status(500).json({
+                mensaje: "Error al obtener tus cartas."
+            });
+        }
+    }
+);
 
 module.exports = router;

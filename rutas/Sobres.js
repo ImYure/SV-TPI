@@ -1,382 +1,757 @@
 
+const router = require("express").Router();
+
+const db = require("../db/conexion");
 const verificarToken = require("../middleware/middleware");
 const verificarAdmin = require("../middleware/verificarAdmin");
 
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const router = require('express').Router();
 
-const db = require('../db/conexion');
+// ==========================================
+// OBTENER TODOS LOS SOBRES
+// ==========================================
 
+router.get("/", async function (req, res) {
+    try {
+        const [sobresDB] = await db.query(`
+            SELECT
+                s.id,
+                s.nombre,
+                s.descripcion,
+                s.precio,
+                s.cantidad_carta,
+                s.categoria_id,
+                s.imagen,
+                c.nombre AS categoria,
+                sc.cartas_id,
+                sc.probabilidad,
+                ca.nombre AS nombre_carta
+            FROM sobres s
+            LEFT JOIN categoria c ON s.categoria_id = c.id
+            LEFT JOIN sobres_cartas sc ON s.id = sc.sobres_id
+            LEFT JOIN cartas ca ON sc.cartas_id = ca.id
+            ORDER BY s.id
+        `);
 
-// LISTAR SOBRES
-router.get('/', function (req, res) {
+        const sobres = {};
 
-    let sql = `
-        SELECT
-    s.id,
-    'sobre' AS tipo,
-    s.nombre,
-    s.imagen,
-    COALESCE(s.descripcion, '') AS descripcion,
-    s.precio,
-    s.cantidad_carta,
-    s.rareza_id,
-    r.nombre AS rareza,
-    s.categoria_id,
-    cat.nombre AS categoria
-        FROM sobres s
-        INNER JOIN categoria cat ON s.categoria_id = cat.id
-        INNER JOIN rareza r ON s.rareza_id = r.id
-    `;
+        sobresDB.forEach(function (fila) {
+            if (!sobres[fila.id]) {
+                sobres[fila.id] = {
+                    id: fila.id,
+                    nombre: fila.nombre,
+                    descripcion: fila.descripcion,
+                    precio: fila.precio,
+                    cantidad_carta: fila.cantidad_carta,
+                    categoria_id: fila.categoria_id,
+                    categoria: fila.categoria,
+                    imagen: fila.imagen,
+                    cartas: []
+                };
+            }
 
-    const condiciones = [];
-    const parametros = [];
-
-    // FILTRAR POR CATEGORÍA
-    if (req.query.categoria && req.query.categoria !== "todos") {
-        condiciones.push("cat.nombre = ?");
-        parametros.push(req.query.categoria);
-    }
-
-    // FILTRAR POR RAREZA
-    if (req.query.rareza) {
-        const rarezas = req.query.rareza.split(",");
-
-        if (rarezas.length > 0) {
-            const signos = rarezas.map(() => "?").join(",");
-            condiciones.push(`r.nombre IN (${signos})`);
-            parametros.push(...rarezas);
-        }
-    }
-
-    if (condiciones.length > 0) {
-        sql += " WHERE " + condiciones.join(" AND ");
-    }
-
-    // ORDENAR
-    if (req.query.orden === "precio") {
-        sql += " ORDER BY s.precio ASC";
-    }
-
-    if (req.query.orden === "reciente") {
-        sql += " ORDER BY s.id DESC";
-    }
-
-    db.query(sql, parametros)
-        .then(([result]) => {
-            res.status(200).json({ sobres: result });
-        })
-        .catch(error => {
-            console.error(error);
-            res.status(500).send("Ocurrió un error al obtener los sobres");
+            if (fila.cartas_id) {
+                sobres[fila.id].cartas.push({
+                    id: fila.cartas_id,
+                    nombre: fila.nombre_carta,
+                    probabilidad: fila.probabilidad
+                });
+            }
         });
-});
 
+        res.json({
+            sobres: Object.values(sobres)
+        });
 
-// CARPETA DE IMÁGENES
-const carpetaImagenes = path.join(__dirname, '..', 'imagenes', 'sobres');
+    } catch (error) {
+        console.error("Error al obtener sobres:", error);
 
-if (!fs.existsSync(carpetaImagenes)) {
-    fs.mkdirSync(carpetaImagenes, { recursive: true });
-}
-
-// CONFIGURACIÓN DE MULTER
-const almacenamiento = multer.diskStorage({
-
-    destination: function (req, file, callback) {
-        callback(null, carpetaImagenes);
-    },
-
-    filename: function (req, file, callback) {
-        const extension = path.extname(file.originalname).toLowerCase();
-        const nombreArchivo = `sobre-${Date.now()}${extension}`;
-
-        callback(null, nombreArchivo);
+        res.status(500).json({
+            mensaje: "Error al obtener los sobres"
+        });
     }
 });
 
-const subirImagen = multer({
 
-    storage: almacenamiento,
+// ==========================================
+// CREAR SOBRE (ADMINISTRADOR)
+// ==========================================
 
-    fileFilter: function (req, file, callback) {
+router.post("/", verificarToken, verificarAdmin, async function (req, res) {
 
-        const extensionesPermitidas = [
-            '.jpg', '.jpeg', '.png',
-            '.webp', '.gif', '.jfif', '.avif'
-        ];
+    const {
+        nombre,
+        descripcion,
+        precio,
+        cantidad_carta,
+        categoria_id,
+        imagen,
+        cartas
+    } = req.body;
 
-        const extension = path.extname(file.originalname).toLowerCase();
+    if (
+        !nombre ||
+        precio === undefined ||
+        cantidad_carta === undefined ||
+        !categoria_id ||
+        !Array.isArray(cartas) ||
+        cartas.length === 0
+    ) {
+        return res.status(400).json({
+            mensaje: "Faltan datos para crear el sobre"
+        });
+    }
 
-        if (extensionesPermitidas.includes(extension)) {
-            callback(null, true);
+    if (
+        Number(precio) < 0 ||
+        !Number.isInteger(Number(cantidad_carta)) ||
+        Number(cantidad_carta) <= 0
+    ) {
+        return res.status(400).json({
+            mensaje: "El precio o la cantidad de cartas no son válidos"
+        });
+    }
+
+    const idsCartas = cartas.map(function (carta) {
+        return Number(carta.id);
+    });
+
+    if (new Set(idsCartas).size !== idsCartas.length) {
+        return res.status(400).json({
+            mensaje: "No se pueden repetir cartas en la lista"
+        });
+    }
+
+    for (const carta of cartas) {
+        const probabilidad = Number(carta.probabilidad);
+
+        if (
+            !carta.id ||
+            !Number.isFinite(probabilidad) ||
+            probabilidad < 0 ||
+            probabilidad > 100
+        ) {
+            return res.status(400).json({
+                mensaje: "Las cartas o sus probabilidades no son válidas"
+            });
+        }
+    }
+
+    const conexion = await db.getConnection();
+
+    try {
+        await conexion.beginTransaction();
+
+        const [resultado] = await conexion.query(
+            `INSERT INTO sobres
+            (nombre, descripcion, precio, cantidad_carta, categoria_id, imagen)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+                nombre,
+                descripcion || "",
+                precio,
+                cantidad_carta,
+                categoria_id,
+                imagen || null
+            ]
+        );
+
+        const sobreId = resultado.insertId;
+
+        for (const carta of cartas) {
+            await conexion.query(
+                `INSERT INTO sobres_cartas
+                (sobres_id, cartas_id, probabilidad)
+                VALUES (?, ?, ?)`,
+                [
+                    sobreId,
+                    carta.id,
+                    carta.probabilidad
+                ]
+            );
+        }
+
+        await conexion.commit();
+
+        res.status(201).json({
+            mensaje: "Sobre creado correctamente",
+            id: sobreId
+        });
+
+    } catch (error) {
+        await conexion.rollback();
+
+        console.error("Error al crear sobre:", error);
+
+        res.status(500).json({
+            mensaje: "Error al crear el sobre"
+        });
+
+    } finally {
+        conexion.release();
+    }
+});
+
+
+// ==========================================
+// MODIFICAR SOBRE (ADMINISTRADOR)
+// ==========================================
+
+router.put("/:id", verificarToken, verificarAdmin, async function (req, res) {
+
+    const { id } = req.params;
+
+    const {
+        nombre,
+        descripcion,
+        precio,
+        cantidad_carta,
+        categoria_id,
+        imagen,
+        cartas
+    } = req.body;
+
+    if (
+        !nombre ||
+        precio === undefined ||
+        cantidad_carta === undefined ||
+        !categoria_id
+    ) {
+        return res.status(400).json({
+            mensaje: "Faltan datos para modificar el sobre"
+        });
+    }
+
+    if (
+        Number(precio) < 0 ||
+        !Number.isInteger(Number(cantidad_carta)) ||
+        Number(cantidad_carta) <= 0
+    ) {
+        return res.status(400).json({
+            mensaje: "El precio o la cantidad de cartas no son válidos"
+        });
+    }
+
+    if (cartas !== undefined && !Array.isArray(cartas)) {
+        return res.status(400).json({
+            mensaje: "La lista de cartas no es válida"
+        });
+    }
+
+    if (Array.isArray(cartas)) {
+
+        const idsCartas = cartas.map(function (carta) {
+            return Number(carta.id);
+        });
+
+        if (
+            cartas.length === 0 ||
+            new Set(idsCartas).size !== idsCartas.length
+        ) {
+            return res.status(400).json({
+                mensaje: "La lista de cartas está vacía o contiene repetidas"
+            });
+        }
+
+        for (const carta of cartas) {
+            const probabilidad = Number(carta.probabilidad);
+
+            if (
+                !carta.id ||
+                !Number.isFinite(probabilidad) ||
+                probabilidad < 0 ||
+                probabilidad > 100
+            ) {
+                return res.status(400).json({
+                    mensaje: "Las cartas o sus probabilidades no son válidas"
+                });
+            }
+        }
+    }
+
+    const conexion = await db.getConnection();
+
+    try {
+        await conexion.beginTransaction();
+
+        const [resultado] = await conexion.query(
+            `UPDATE sobres
+            SET nombre = ?,
+                descripcion = ?,
+                precio = ?,
+                cantidad_carta = ?,
+                categoria_id = ?,
+                imagen = COALESCE(?, imagen)
+            WHERE id = ?`,
+            [
+                nombre,
+                descripcion || "",
+                precio,
+                cantidad_carta,
+                categoria_id,
+                imagen || null,
+                id
+            ]
+        );
+
+        if (resultado.affectedRows === 0) {
+            await conexion.rollback();
+
+            return res.status(404).json({
+                mensaje: "No se encontró el sobre"
+            });
+        }
+
+        if (Array.isArray(cartas)) {
+
+            await conexion.query(
+                "DELETE FROM sobres_cartas WHERE sobres_id = ?",
+                [id]
+            );
+
+            for (const carta of cartas) {
+                await conexion.query(
+                    `INSERT INTO sobres_cartas
+                    (sobres_id, cartas_id, probabilidad)
+                    VALUES (?, ?, ?)`,
+                    [
+                        id,
+                        carta.id,
+                        carta.probabilidad
+                    ]
+                );
+            }
+        }
+
+        await conexion.commit();
+
+        res.json({
+            mensaje: "Sobre modificado correctamente"
+        });
+
+    } catch (error) {
+        await conexion.rollback();
+
+        console.error("Error al modificar sobre:", error);
+
+        res.status(500).json({
+            mensaje: "Error al modificar el sobre"
+        });
+
+    } finally {
+        conexion.release();
+    }
+});
+
+
+// ==========================================
+// ELIMINAR SOBRE (ADMINISTRADOR)
+// ==========================================
+
+router.delete("/:id", verificarToken, verificarAdmin, async function (req, res) {
+
+    const { id } = req.params;
+
+    const conexion = await db.getConnection();
+
+    try {
+        await conexion.beginTransaction();
+
+        await conexion.query(
+            "DELETE FROM sobres_cartas WHERE sobres_id = ?",
+            [id]
+        );
+
+        const [resultado] = await conexion.query(
+            "DELETE FROM sobres WHERE id = ?",
+            [id]
+        );
+
+        if (resultado.affectedRows === 0) {
+            await conexion.rollback();
+
+            return res.status(404).json({
+                mensaje: "No se encontró el sobre"
+            });
+        }
+
+        await conexion.commit();
+
+        res.json({
+            mensaje: "Sobre eliminado correctamente"
+        });
+
+    } catch (error) {
+        await conexion.rollback();
+
+        console.error("Error al eliminar sobre:", error);
+
+        res.status(500).json({
+            mensaje: "Error al eliminar el sobre"
+        });
+
+    } finally {
+        conexion.release();
+    }
+});
+
+
+// ==========================================
+// COMPRAR SOBRE
+// ==========================================
+
+router.post("/comprar/:id", verificarToken, async function (req, res) {
+
+    const { id } = req.params;
+    const usuarioId = req.usuario.id;
+
+    const conexion = await db.getConnection();
+
+    try {
+        await conexion.beginTransaction();
+
+        const [sobres] = await conexion.query(
+            "SELECT id, nombre, precio FROM sobres WHERE id = ?",
+            [id]
+        );
+
+        if (sobres.length === 0) {
+            await conexion.rollback();
+
+            return res.status(404).json({
+                mensaje: "El sobre no existe"
+            });
+        }
+
+        const sobre = sobres[0];
+
+        const [billeteras] = await conexion.query(
+            "SELECT * FROM billetera WHERE usuario_id = ? FOR UPDATE",
+            [usuarioId]
+        );
+
+        if (billeteras.length === 0) {
+            await conexion.rollback();
+
+            return res.status(404).json({
+                mensaje: "No se encontró la billetera del usuario"
+            });
+        }
+
+        const saldo = Number(billeteras[0].saldo);
+
+        if (saldo < Number(sobre.precio)) {
+            await conexion.rollback();
+
+            return res.status(400).json({
+                mensaje: "No tienes monedas suficientes"
+            });
+        }
+
+        await conexion.query(
+            `UPDATE billetera
+            SET saldo = saldo - ?
+            WHERE usuario_id = ?`,
+            [sobre.precio, usuarioId]
+        );
+
+        const [sobresUsuario] = await conexion.query(
+            `SELECT id, cantidad
+            FROM usuario_sobres
+            WHERE usuario_id = ? AND sobre_id = ?
+            FOR UPDATE`,
+            [usuarioId, id]
+        );
+
+        if (sobresUsuario.length > 0) {
+            await conexion.query(
+                `UPDATE usuario_sobres
+                SET cantidad = cantidad + 1
+                WHERE id = ?`,
+                [sobresUsuario[0].id]
+            );
+
         } else {
-            callback(new Error('Formato de imagen no permitido.'));
+            await conexion.query(
+                `INSERT INTO usuario_sobres
+                (usuario_id, sobre_id, cantidad)
+                VALUES (?, ?, 1)`,
+                [usuarioId, id]
+            );
         }
-    },
 
-    limits: {
-        fileSize: 5 * 1024 * 1024
+        await conexion.commit();
+
+        res.json({
+            mensaje: "Sobre comprado correctamente",
+            sobre: sobre.nombre,
+            saldo: saldo - Number(sobre.precio)
+        });
+
+    } catch (error) {
+        await conexion.rollback();
+
+        console.error("Error al comprar sobre:", error);
+
+        res.status(500).json({
+            mensaje: "Error al comprar el sobre"
+        });
+
+    } finally {
+        conexion.release();
     }
 });
 
 
-// CREAR SOBRE
-router.post(
-    "/",
-    verificarToken,
-    verificarAdmin,
-    subirImagen.single('imagen'),
-    function (req, res) {
+// ==========================================
+// ABRIR SOBRE
+// ==========================================
 
-        const {
-            nombre,
-            descripcion,
-            precio,
-            cantidad_carta,
-            categoria_id,
-            rareza_id
-        } = req.body;
+router.post("/abrir/:id", verificarToken, async function (req, res) {
 
-        // VALIDAR DATOS
-        if (
-            !nombre ||
-            !nombre.trim() ||
-            !descripcion ||
-            !descripcion.trim() ||
-            precio === undefined ||
-            precio === "" ||
-            cantidad_carta === undefined ||
-            cantidad_carta === "" ||
-            !categoria_id ||
-            !rareza_id ||
-            !req.file
-        ) {
+    const { id } = req.params;
+    const usuarioId = req.usuario.id;
 
-            if (req.file) fs.unlinkSync(req.file.path);
+    const conexion = await db.getConnection();
 
-            return res.status(400).json({
-                mensaje: "Completá todos los campos y seleccioná una imagen."
+    try {
+        await conexion.beginTransaction();
+
+        const [sobres] = await conexion.query(
+            `SELECT id, nombre, cantidad_carta
+            FROM sobres
+            WHERE id = ?`,
+            [id]
+        );
+
+        if (sobres.length === 0) {
+            await conexion.rollback();
+
+            return res.status(404).json({
+                mensaje: "El sobre no existe"
             });
         }
 
-        const imagen = req.file.filename;
+        const sobre = sobres[0];
 
-        const sql = `
-            INSERT INTO sobres
-            (nombre, descripcion, precio, cantidad_carta,
-            rareza_id, categoria_id, imagen)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `;
+        const [sobresUsuario] = await conexion.query(
+            `SELECT id, cantidad
+            FROM usuario_sobres
+            WHERE usuario_id = ? AND sobre_id = ?
+            FOR UPDATE`,
+            [usuarioId, id]
+        );
 
-        const valores = [
-            nombre.trim(),
-            descripcion.trim(),
-            precio,
-            cantidad_carta,
-            rareza_id,
-            categoria_id,
-            imagen
-        ];
-
-        db.query(sql, valores)
-
-            .then(([resultado]) => {
-
-                res.status(201).json({
-                    mensaje: "Sobre creado correctamente.",
-                    id: resultado.insertId,
-                    imagen: imagen
-                });
-
-            })
-
-            .catch(error => {
-
-                console.error(error);
-
-                fs.unlink(req.file.path, () => { });
-
-                res.status(500).json({
-                    mensaje: "Error al crear el sobre."
-                });
-            });
-    }
-);
-
-// EDITAR SOBRE
-router.put(
-    "/:id",
-    verificarToken,
-    verificarAdmin,
-    subirImagen.single("imagen"),
-    function (req, res) {
-
-        const { id } = req.params;
-
-        const {
-            nombre,
-            descripcion,
-            precio,
-            cantidad_carta,
-            categoria_id,
-            rareza_id
-        } = req.body;
-
-        // VALIDAR DATOS
         if (
-            !nombre || !nombre.trim() ||
-            !descripcion || !descripcion.trim() ||
-            precio === undefined || precio === "" ||
-            cantidad_carta === undefined || cantidad_carta === "" ||
-            !categoria_id ||
-            !rareza_id
+            sobresUsuario.length === 0 ||
+            Number(sobresUsuario[0].cantidad) <= 0
         ) {
-            if (req.file) fs.unlink(req.file.path, () => { });
+            await conexion.rollback();
 
             return res.status(400).json({
-                mensaje: "Completá todos los campos."
+                mensaje: "No tienes este sobre en tu inventario"
             });
         }
 
-        // BUSCAR EL SOBRE ACTUAL
-        const sqlBuscar = "SELECT imagen FROM sobres WHERE id = ?";
+        const [cartasDisponibles] = await conexion.query(
+            `SELECT
+                c.id,
+                c.nombre,
+                c.descripcion,
+                c.imagen,
+                c.precio,
+                c.ataque,
+                c.defensa,
+                c.vida,
+                c.velocidad,
+                c.critico,
+                c.categoria_id,
+                c.rareza_id,
+                cat.nombre AS categoria,
+                r.nombre AS rareza,
+                sc.probabilidad
+            FROM sobres_cartas sc
+            INNER JOIN cartas c ON sc.cartas_id = c.id
+            LEFT JOIN categoria cat ON c.categoria_id = cat.id
+            LEFT JOIN rareza r ON c.rareza_id = r.id
+            WHERE sc.sobres_id = ?`,
+            [id]
+        );
 
-        db.query(sqlBuscar, [id])
+        if (cartasDisponibles.length === 0) {
+            await conexion.rollback();
 
-            .then(([resultado]) => {
-
-                if (resultado.length === 0) {
-                    if (req.file) fs.unlink(req.file.path, () => { });
-
-                    return res.status(404).json({
-                        mensaje: "No se encontró el sobre."
-                    });
-                }
-
-                const imagenAnterior = resultado[0].imagen;
-
-                // Si se subió una imagen nueva, utilizarla.
-                // Si no, conservar la anterior.
-                const imagen = req.file
-                    ? req.file.filename
-                    : imagenAnterior;
-
-                const sqlActualizar = `
-                    UPDATE sobres
-                    SET nombre = ?,
-                        descripcion = ?,
-                        precio = ?,
-                        cantidad_carta = ?,
-                        categoria_id = ?,
-                        rareza_id = ?,
-                        imagen = ?
-                    WHERE id = ?
-                `;
-
-                const valores = [
-                    nombre.trim(),
-                    descripcion.trim(),
-                    precio,
-                    cantidad_carta,
-                    categoria_id,
-                    rareza_id,
-                    imagen,
-                    id
-                ];
-
-                return db.query(sqlActualizar, valores)
-                    .then(() => {
-
-                        // Borrar la imagen anterior si fue reemplazada.
-                        if (req.file && imagenAnterior) {
-                            const rutaAnterior = path.join(
-                                carpetaImagenes,
-                                path.basename(imagenAnterior)
-                            );
-
-                            fs.unlink(rutaAnterior, () => { });
-                        }
-
-                        res.status(200).json({
-                            mensaje: "Sobre actualizado correctamente."
-                        });
-
-                    });
-            })
-
-            .catch(error => {
-
-                console.error(error);
-
-                if (req.file) fs.unlink(req.file.path, () => { });
-
-                res.status(500).json({
-                    mensaje: "Error al actualizar el sobre."
-                });
+            return res.status(400).json({
+                mensaje: "Este sobre no tiene cartas disponibles"
             });
-    }
-);
+        }
 
+        let sumaProbabilidades = 0;
 
-// ELIMINAR SOBRE
-router.delete(
-    "/:id",
-    verificarToken,
-    verificarAdmin,
-    function (req, res) {
+        for (const carta of cartasDisponibles) {
+            const probabilidad = Number(carta.probabilidad);
 
-        const { id } = req.params;
+            if (
+                !Number.isFinite(probabilidad) ||
+                probabilidad < 0
+            ) {
+                await conexion.rollback();
 
-        // BUSCAR LA IMAGEN DEL SOBRE
-        const sqlBuscar = "SELECT imagen FROM sobres WHERE id = ?";
-
-        db.query(sqlBuscar, [id])
-
-            .then(([resultado]) => {
-
-                if (resultado.length === 0) {
-                    return res.status(404).json({
-                        mensaje: "No se encontró el sobre."
-                    });
-                }
-
-                const imagen = resultado[0].imagen;
-
-                // ELIMINAR EL REGISTRO
-                const sqlEliminar = "DELETE FROM sobres WHERE id = ?";
-
-                return db.query(sqlEliminar, [id])
-                    .then(() => {
-
-                        // ELIMINAR LA IMAGEN DE LA CARPETA
-                        if (imagen) {
-                            const rutaImagen = path.join(
-                                carpetaImagenes,
-                                path.basename(imagen)
-                            );
-
-                            fs.unlink(rutaImagen, () => { });
-                        }
-
-                        res.status(200).json({
-                            mensaje: "Sobre eliminado correctamente."
-                        });
-
-                    });
-            })
-
-            .catch(error => {
-
-                console.error(error);
-
-                res.status(500).json({
-                    mensaje: "Error al eliminar el sobre."
+                return res.status(400).json({
+                    mensaje: "Hay probabilidades inválidas en este sobre"
                 });
+            }
+
+            sumaProbabilidades += probabilidad;
+        }
+
+        if (sumaProbabilidades <= 0) {
+            await conexion.rollback();
+
+            return res.status(400).json({
+                mensaje: "Este sobre no tiene probabilidades válidas"
             });
+        }
+
+        // Seleccionar cartas según sus probabilidades
+
+        const cartasObtenidas = [];
+        const cantidadCartas = Number(sobre.cantidad_carta);
+
+        for (let i = 0; i < cantidadCartas; i++) {
+
+            let numeroAleatorio = Math.random() * sumaProbabilidades;
+            let cartaElegida = null;
+
+            for (const carta of cartasDisponibles) {
+
+                numeroAleatorio -= Number(carta.probabilidad);
+
+                if (numeroAleatorio < 0) {
+                    cartaElegida = carta;
+                    break;
+                }
+            }
+
+            if (!cartaElegida) {
+                cartaElegida = cartasDisponibles[cartasDisponibles.length - 1];
+            }
+
+            cartasObtenidas.push(cartaElegida);
+        }
+
+        // Descontar un sobre
+
+        if (Number(sobresUsuario[0].cantidad) === 1) {
+
+            await conexion.query(
+                "DELETE FROM usuario_sobres WHERE id = ?",
+                [sobresUsuario[0].id]
+            );
+
+        } else {
+
+            await conexion.query(
+                `UPDATE usuario_sobres
+                SET cantidad = cantidad - 1
+                WHERE id = ?`,
+                [sobresUsuario[0].id]
+            );
+        }
+
+        // Guardar las cartas obtenidas
+
+        for (const carta of cartasObtenidas) {
+
+            const [cartasUsuario] = await conexion.query(
+                `SELECT id, cantidad
+                FROM usuario_cartas
+                WHERE usuario_id = ? AND carta_id = ?
+                FOR UPDATE`,
+                [usuarioId, carta.id]
+            );
+
+            if (cartasUsuario.length > 0) {
+
+                await conexion.query(
+                    `UPDATE usuario_cartas
+                    SET cantidad = cantidad + 1
+                    WHERE id = ?`,
+                    [cartasUsuario[0].id]
+                );
+
+            } else {
+
+                await conexion.query(
+                    `INSERT INTO usuario_cartas
+                    (usuario_id, carta_id, cantidad)
+                    VALUES (?, ?, 1)`,
+                    [usuarioId, carta.id]
+                );
+            }
+        }
+
+        await conexion.commit();
+
+        res.json({
+            mensaje: "¡Sobre abierto correctamente!",
+            sobre: sobre.nombre,
+            cartas: cartasObtenidas,
+            cantidad: cartasObtenidas.length
+        });
+
+    } catch (error) {
+        await conexion.rollback();
+
+        console.error("Error al abrir sobre:", error);
+
+        res.status(500).json({
+            mensaje: "Error al abrir el sobre"
+        });
+
+    } finally {
+        conexion.release();
     }
-);
+});
+
+
+// ==========================================
+// OBTENER SOBRES DEL INVENTARIO
+// ==========================================
+
+router.get("/mis-sobres", verificarToken, async function (req, res) {
+
+    const usuarioId = req.usuario.id;
+
+    try {
+        const [sobres] = await db.query(
+            `SELECT
+                s.id,
+                s.nombre,
+                s.descripcion,
+                s.precio,
+                s.cantidad_carta,
+                s.categoria_id,
+                s.imagen,
+                c.nombre AS categoria,
+                us.cantidad
+            FROM usuario_sobres us
+            INNER JOIN sobres s ON us.sobre_id = s.id
+            LEFT JOIN categoria c ON s.categoria_id = c.id
+            WHERE us.usuario_id = ?
+            ORDER BY s.id`,
+            [usuarioId]
+        );
+
+        res.json(sobres);
+
+    } catch (error) {
+        console.error("Error al obtener sobres del usuario:", error);
+
+        res.status(500).json({
+            mensaje: "Error al obtener los sobres del inventario"
+        });
+    }
+});
+
 
 module.exports = router;
