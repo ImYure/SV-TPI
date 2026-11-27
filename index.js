@@ -13,7 +13,6 @@ const rutasProductos = require('./rutas/productos');
 const router = require('./rutas/PerfilUsuario');
 const rutas = require('./rutas/ruta');
 
-const aperturaSobres = require('./rutas/AperturaSobres');
 const rutasCartas = require('./rutas/Cartas');
 const rutasSobres = require('./rutas/Sobres');
 const rutasMazos = require('./rutas/Mazos');
@@ -44,7 +43,6 @@ app.use(function(req, res, next) {
 // Routers
 app.use('/perfil', router);
 app.use('/api', rutas);
-app.use('/sobres', aperturaSobres);
 app.use('/sobres', rutasSobres);
 app.use('/cartas', rutasCartas);
 app.use('/productos', rutasProductos);
