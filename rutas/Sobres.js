@@ -506,6 +506,78 @@ router.post("/comprar/:id", verificarToken, async function (req, res) {
 // ABRIR SOBRE
 // ==========================================
 
+// Probabilidades fijas
+const probabilidades = {
+    comun: 70,
+    rara: 25,
+    legendaria: 5
+};
+
+// Sortear rareza
+function sortearRareza() {
+
+    const total =
+        probabilidades.comun +
+        probabilidades.rara +
+        probabilidades.legendaria;
+
+    if (total !== 100) {
+        throw new Error("Las probabilidades deben sumar 100.");
+    }
+
+    const numero = Math.floor(Math.random() * 100) + 1;
+
+    if (numero <= probabilidades.comun) {
+        return 1;
+    } else if (numero <= probabilidades.comun + probabilidades.rara) {
+        return 2;
+    } else {
+        return 3;
+    }
+}
+
+// Buscar una carta aleatoria de una rareza
+async function buscarCartas(conexion, sobreId, categoriaId, rarezaId) {
+
+    const sql = `
+        SELECT
+            c.id,
+            c.nombre,
+            c.descripcion,
+            c.imagen,
+            c.precio,
+            c.ataque,
+            c.defensa,
+            c.vida,
+            c.velocidad,
+            c.critico,
+            c.categoria_id,
+            c.rareza_id,
+            cat.nombre AS categoria,
+            r.nombre AS rareza
+        FROM cartas c
+        INNER JOIN sobres_cartas sc ON sc.cartas_id = c.id
+        LEFT JOIN categoria cat ON c.categoria_id = cat.id
+        LEFT JOIN rareza r ON c.rareza_id = r.id
+        WHERE sc.sobres_id = ?
+        AND c.categoria_id = ?
+        AND c.rareza_id = ?
+        ORDER BY RAND()
+        LIMIT 1
+    `;
+
+    const [resultado] = await conexion.query(
+        sql,
+        [sobreId, categoriaId, rarezaId]
+    );
+
+    if (resultado.length === 0) {
+        return null;
+    }
+
+    return resultado[0];
+}
+
 router.post("/abrir/:id", verificarToken, async function (req, res) {
 
     const { id } = req.params;
@@ -514,10 +586,12 @@ router.post("/abrir/:id", verificarToken, async function (req, res) {
     const conexion = await db.getConnection();
 
     try {
+
         await conexion.beginTransaction();
 
+        // Buscar sobre
         const [sobres] = await conexion.query(
-            `SELECT id, nombre, cantidad_carta
+            `SELECT id, nombre, cantidad_carta, categoria_id
             FROM sobres
             WHERE id = ?`,
             [id]
@@ -533,6 +607,7 @@ router.post("/abrir/:id", verificarToken, async function (req, res) {
 
         const sobre = sobres[0];
 
+        // Comprobar inventario
         const [sobresUsuario] = await conexion.query(
             `SELECT id, cantidad
             FROM usuario_sobres
@@ -552,95 +627,85 @@ router.post("/abrir/:id", verificarToken, async function (req, res) {
             });
         }
 
-        const [cartasDisponibles] = await conexion.query(
-            `SELECT
-                c.id,
-                c.nombre,
-                c.descripcion,
-                c.imagen,
-                c.precio,
-                c.ataque,
-                c.defensa,
-                c.vida,
-                c.velocidad,
-                c.critico,
-                c.categoria_id,
-                c.rareza_id,
-                cat.nombre AS categoria,
-                r.nombre AS rareza,
-                sc.probabilidad
-            FROM sobres_cartas sc
-            INNER JOIN cartas c ON sc.cartas_id = c.id
-            LEFT JOIN categoria cat ON c.categoria_id = cat.id
-            LEFT JOIN rareza r ON c.rareza_id = r.id
-            WHERE sc.sobres_id = ?`,
+        // Comprobar que el sobre tenga cartas asignadas
+        const [cartasAsignadas] = await conexion.query(
+            `SELECT cartas_id
+            FROM sobres_cartas
+            WHERE sobres_id = ?`,
             [id]
         );
 
-        if (cartasDisponibles.length === 0) {
+        if (cartasAsignadas.length === 0) {
             await conexion.rollback();
 
             return res.status(400).json({
-                mensaje: "Este sobre no tiene cartas disponibles"
+                mensaje: "Este sobre no tiene cartas asignadas"
             });
         }
 
-        let sumaProbabilidades = 0;
+        // Comprobar que existan las tres rarezas
+        const [rarezasDisponibles] = await conexion.query(
+            `SELECT DISTINCT c.rareza_id
+            FROM cartas c
+            INNER JOIN sobres_cartas sc ON sc.cartas_id = c.id
+            WHERE sc.sobres_id = ?
+            AND c.categoria_id = ?`,
+            [id, sobre.categoria_id]
+        );
 
-        for (const carta of cartasDisponibles) {
-            const probabilidad = Number(carta.probabilidad);
+        const idsNecesarios = [1, 2, 3];
 
-            if (
-                !Number.isFinite(probabilidad) ||
-                probabilidad < 0
-            ) {
+        for (const rarezaId of idsNecesarios) {
+
+            const existe = rarezasDisponibles.some(
+                r => Number(r.rareza_id) === rarezaId
+            );
+
+            if (!existe) {
+
+                const nombres = {
+                    1: "común",
+                    2: "rara",
+                    3: "legendaria"
+                };
+
                 await conexion.rollback();
 
                 return res.status(400).json({
-                    mensaje: "Hay probabilidades inválidas en este sobre"
+                    mensaje: `No hay cartas de rareza ${nombres[rarezaId]} disponibles en este sobre`
                 });
             }
-
-            sumaProbabilidades += probabilidad;
         }
 
-        if (sumaProbabilidades <= 0) {
-            await conexion.rollback();
-
-            return res.status(400).json({
-                mensaje: "Este sobre no tiene probabilidades válidas"
-            });
-        }
-
-        // Seleccionar cartas según sus probabilidades
-
+        // Sortear cartas según la cantidad del sobre
         const cartasObtenidas = [];
         const cantidadCartas = Number(sobre.cantidad_carta);
 
-        for (let i = 0; i < cantidadCartas; i++) {
+        if (!Number.isInteger(cantidadCartas) || cantidadCartas <= 0) {
+            await conexion.rollback();
 
-            let numeroAleatorio = Math.random() * sumaProbabilidades;
-            let cartaElegida = null;
-
-            for (const carta of cartasDisponibles) {
-
-                numeroAleatorio -= Number(carta.probabilidad);
-
-                if (numeroAleatorio < 0) {
-                    cartaElegida = carta;
-                    break;
-                }
-            }
-
-            if (!cartaElegida) {
-                cartaElegida = cartasDisponibles[cartasDisponibles.length - 1];
-            }
-
-            cartasObtenidas.push(cartaElegida);
+            return res.status(400).json({
+                mensaje: "La cantidad de cartas del sobre no es válida"
+            });
         }
 
-        // Descontar un sobre
+        while (cartasObtenidas.length < cantidadCartas) {
 
+            const rarezaId = sortearRareza();
+
+            const carta = await buscarCartas(
+                conexion,
+                id,
+                sobre.categoria_id,
+                rarezaId
+            );
+
+            if (carta !== null) {
+                cartasObtenidas.push(carta);
+            }
+        }
+
+        // Descontar un sobre del inventario
         if (Number(sobresUsuario[0].cantidad) === 1) {
 
             await conexion.query(
@@ -659,7 +724,6 @@ router.post("/abrir/:id", verificarToken, async function (req, res) {
         }
 
         // Guardar las cartas obtenidas
-
         for (const carta of cartasObtenidas) {
 
             const [cartasUsuario] = await conexion.query(
@@ -695,11 +759,12 @@ router.post("/abrir/:id", verificarToken, async function (req, res) {
         res.json({
             mensaje: "¡Sobre abierto correctamente!",
             sobre: sobre.nombre,
-            cartas: cartasObtenidas,
+            cartasObtenidas: cartasObtenidas,
             cantidad: cartasObtenidas.length
         });
 
     } catch (error) {
+
         await conexion.rollback();
 
         console.error("Error al abrir sobre:", error);
